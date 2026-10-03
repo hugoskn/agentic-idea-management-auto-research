@@ -1,2 +1,2 @@
-claude-agent-sdk>=0.2.128
-pydantic>=2.13
+claude-agent-sdk>=0.2.163
+pydantic>=2.13.5

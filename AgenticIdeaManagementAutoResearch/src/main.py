@@ -10,6 +10,8 @@ from orchestration.research_loop import ResearchConfig, run_research
 
 log = logging.getLogger("aim")
 
+MAX_WORKDIR_LENGTH = 240
+
 COLUMNS = [
     "Original problem",
     "Generated ideas",
@@ -70,7 +72,11 @@ async def research(problem: str, ideas_count: int = 6, output_root: Path = Path(
     if not problem:
         raise ValueError("problem must not be empty")
     config = ResearchConfig(ideas_count=ideas_count, **settings)
-    out_dir = Path(output_root) / folder_name(problem)
+    root = Path(output_root).resolve()
+    room = MAX_WORKDIR_LENGTH - len(str(root / "experiments" / "E999_I999"))
+    if room < 10:
+        raise ValueError(f"output_root is too deep for experiment working directories: {root}")
+    out_dir = root / folder_name(problem, min(80, room))
     out_dir.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(out_dir / "research.log", encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
