@@ -55,15 +55,15 @@ src/
   models/          Pydantic models (Idea, Cluster, Ranking, Experiment, Audit, ResearchState)
   orchestration/
     research_loop.py      owns the state; generate → cluster → rank → select → execute ∥ → audit → learn
-    resource_planner.py   exploration/exploitation split, stagnation detection
+    resource_planner.py   LLM planner of Solver branches per iteration, stagnation detection
   main.py          entry point and CSV export
   self_check.py    offline check of state transitions, planning, stop rules and CSV output
 ```
 
 - Agents never mutate the research state. Their outputs are validated by Pydantic and by per-agent checks (exact idea count, every idea clustered/ranked once, score spread, selection within budget); a rejected output is retried with the rejection reason.
 - Selected ideas run in parallel, each Solver in its own directory, and each Solver's result goes to the SolutionAuditor. The Solver keeps a multi-turn `ClaudeSDKClient` session so it can refine its implementation from execution feedback.
-- Experiments whose audit is invalid, misattributed or reward-hacked are kept for the record but excluded from the evidence and lessons fed to later agents.
-- The resource planner turns cluster coverage, the best verified score and stagnation into exploration/exploitation slots that the AcquisitionAgent must follow or explicitly justify deviating from.
+- The SolutionAuditor flags `trivial`, `task_mismatch`, `idea_mismatch` and `reward_hacking`. Results flagged `trivial`, `task_mismatch` or `reward_hacking` are kept for the record but excluded from the evidence and lessons fed to later agents; they still consume budget. When `idea_mismatch` is the only flag, the auditor reconstructs the idea the code actually implements, it joins the pool (origin `reconstructed`) and the score and lessons are attributed to it.
+- `--budget` is the fixed total of Solver branches. Iteration 1 is pinned to 5 branches; from iteration 2 the Resource Planner agent re-plans how the remaining branches are spread over iterations (1 to `--parallel` per iteration, preferring at least 3, within `--iterations`), trading parallel breadth against more frequent feedback. The AcquisitionAgent fills exactly that many branches and decides the exploration/exploitation balance itself.
 - The loop stops when a verified solution reaches `success_score`, the experiment budget runs out, `max_iterations` is reached, there has been no improvement for `patience` iterations, or the AcquisitionAgent decides more experiments are not worth it.
 
 Solvers and auditors run Bash in their experiment directory. Bash sandboxing is not available on Windows, so run untrusted problems inside a VM or container.

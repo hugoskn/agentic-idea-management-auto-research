@@ -49,8 +49,8 @@ async def generate_ideas(
                 raise ValueError(f"Idea '{idea.title}' references unknown parent ids {sorted(unknown)}.")
             if not existing and (idea.origin != IdeaOrigin.INITIAL or idea.parent_ids):
                 raise ValueError("In initial mode every idea must have origin 'initial' and no parent_ids.")
-            if existing and idea.origin == IdeaOrigin.INITIAL:
-                raise ValueError(f"Idea '{idea.title}' must use an evolve origin, not 'initial'.")
+            if existing and idea.origin in (IdeaOrigin.INITIAL, IdeaOrigin.RECONSTRUCTED):
+                raise ValueError(f"Idea '{idea.title}' must use an evolve origin, not '{idea.origin.value}'.")
 
     payload = {
         "mode": "evolve" if existing else "initial",

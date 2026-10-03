@@ -21,6 +21,7 @@ class IdeaOrigin(str, Enum):
     COMBINATION = "combination"
     FIX = "fix"
     NEW_DIRECTION = "new_direction"
+    RECONSTRUCTED = "reconstructed"
 
 
 class IdeaDraft(BaseModel):

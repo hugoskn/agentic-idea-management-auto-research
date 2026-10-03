@@ -3,7 +3,6 @@ from models.cluster import ClusteringResult
 from models.experiment import SelectionResult
 from models.idea import Idea
 from models.ranking import IdeaRanking
-from models.research_state import ResourcePlan
 
 SYSTEM_PROMPT = """You are the AcquisitionAgent of an automated research system.
 
@@ -15,7 +14,7 @@ Do NOT simply select the highest-scoring ideas. Balance:
 
 Example: if the three best ideas belong to the same cluster, consider whether testing a promising idea from a different cluster gives more information about the solution space than a third idea from the same direction.
 
-The resource_plan gives a target number of exploration and exploitation slots computed from the evidence so far. Follow it unless you have a strong, explicitly justified reason to deviate. Never select more ideas than resource_plan.slots.
+The Resource Planner set branches: the number of parallel Solver branches this iteration. Select exactly that many ideas, or every candidate if there are fewer. Decide the exploration/exploitation balance yourself from the clusters, scores and verified evidence: avoid both pure exploitation and pure exploration.
 
 Only select from candidate_ideas. For each selected idea give idea_id, priority (1 = highest), selection_reason and exploration_or_exploitation.
 Explain the overall decision in strategy_rationale, including how clusters, scores, previous results and remaining budget influenced it.
@@ -30,10 +29,11 @@ async def select_ideas(
     clusters: ClusteringResult,
     rankings: list[IdeaRanking],
     evidence: list[dict],
-    plan: ResourcePlan,
+    branches: int,
     remaining_budget: int,
 ) -> SelectionResult:
     candidate_ids = {i.id for i in candidates}
+    expected = min(branches, len(candidates))
 
     def check(result: SelectionResult) -> None:
         chosen = [s.idea_id for s in result.selected]
@@ -41,10 +41,8 @@ async def select_ideas(
             raise ValueError(f"Selected ids {sorted(set(chosen) - candidate_ids)} are not candidates.")
         if len(chosen) != len(set(chosen)):
             raise ValueError("An idea was selected more than once.")
-        if len(chosen) > plan.slots:
-            raise ValueError(f"Selected {len(chosen)} ideas but only {plan.slots} slots are available.")
-        if result.continue_research and not chosen:
-            raise ValueError("continue_research is true but no idea was selected.")
+        if result.continue_research and len(chosen) != expected:
+            raise ValueError(f"Selected {len(chosen)} ideas but exactly {expected} branches must be filled.")
 
     payload = {
         "problem": problem,
@@ -53,6 +51,6 @@ async def select_ideas(
         "rankings": rankings,
         "previous_experiment_results": evidence,
         "remaining_experiment_budget": remaining_budget,
-        "resource_plan": plan,
+        "branches": branches,
     }
     return await ask("AcquisitionAgent", SYSTEM_PROMPT, payload, SelectionResult, check)

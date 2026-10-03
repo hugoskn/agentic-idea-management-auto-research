@@ -17,11 +17,23 @@ class Lesson(BaseModel):
     trusted: bool
 
 
+class ResearchConfig(BaseModel):
+    ideas_count: int = Field(default=6, ge=1)
+    new_ideas_per_iteration: int = Field(default=3, ge=1)
+    max_iterations: int = Field(default=3, ge=1)
+    experiment_budget: int = Field(default=6, ge=1, description="Total number of Solver branches across the whole run.")
+    initial_branches: int = Field(default=5, ge=1, description="Branches in iteration 1, pinned for an initial breadth of exploration.")
+    min_branches: int = Field(default=3, ge=1, description="Preferred minimum branches per later iteration.")
+    max_branches: int = Field(default=10, ge=1, description="Hard maximum branches per iteration.")
+    success_score: int = Field(default=85, ge=0, le=100)
+    discard_score: int = Field(default=25, ge=0, le=100)
+    patience: int = Field(default=2, ge=1)
+    max_attempts_per_idea: int = Field(default=2, ge=1)
+    max_refinements: int = Field(default=2, ge=0)
+
+
 class ResourcePlan(BaseModel):
-    slots: int
-    exploration_slots: int
-    exploitation_slots: int
-    exploration_ratio: float
+    plan: list[int] = Field(description="Solver branches per iteration for the whole run, frozen prefix included.")
     rationale: str
 
 
@@ -68,6 +80,12 @@ class ResearchState(BaseModel):
 
     def best_audit(self) -> AuditResult | None:
         return max(self.trusted_audits(), key=lambda a: (a.task_solved, a.score), default=None)
+
+    def best_scores(self) -> dict[str, int]:
+        scores: dict[str, int] = {}
+        for a in self.trusted_audits():
+            scores[a.idea_id] = max(a.score, scores.get(a.idea_id, 0))
+        return scores
 
     def trusted_lessons(self) -> list[str]:
         return [f"[{l.idea_id}] {l.text}" for l in self.lessons if l.trusted]

@@ -72,8 +72,10 @@ def iteration_row(state: ResearchState, record: IterationRecord, is_last: bool) 
         "\n".join(f"P{s.priority} {s.idea_id} [{s.exploration_or_exploitation.value}]: {s.selection_reason}" for s in selected),
         "\n".join(f"{e.id} {e.idea_id}: {e.report.result if e.report else e.error}" for e in experiments),
         "\n".join(
-            f"{a.experiment_id} {a.idea_id}: valid={a.valid} idea_implemented={a.idea_implemented_correctly} "
-            f"solved={a.task_solved} score={a.score} discrepancies={'; '.join(a.discrepancies) or 'none'}"
+            f"{a.experiment_id} {a.idea_id}: flags={', '.join(f.value for f in a.flags) or 'none'} "
+            f"solved={a.task_solved} score={a.score} confidence={a.confidence:.2f} "
+            f"discrepancies={'; '.join(a.discrepancies) or 'none'}"
+            + (f" reconstructed from {state.ideas[a.idea_id].parent_ids[0]}: {state.ideas[a.idea_id].title}" if a.trusted and a.reconstructed_idea else "")
             for a in audits
         ),
         "\n".join(
@@ -128,14 +130,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AIM: agentic idea management for automated research.")
     parser.add_argument("problem")
     parser.add_argument("--ideas", type=int, default=6, help="number of initial ideas")
-    parser.add_argument("--iterations", type=int, default=3)
-    parser.add_argument("--budget", type=int, default=6, help="maximum number of experiments")
-    parser.add_argument("--parallel", type=int, default=3, help="maximum concurrent solvers")
+    parser.add_argument("--iterations", type=int, default=3, help="hard cap on iterations planned by the Resource Planner")
+    parser.add_argument("--budget", type=int, default=6, help="total number of Solver branches")
+    parser.add_argument("--parallel", type=int, default=10, help="maximum Solver branches per iteration")
     parser.add_argument("--output", type=Path, default=RESULTS_DIR)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     path = main(
         args.problem, args.ideas, output_root=args.output,
-        max_iterations=args.iterations, experiment_budget=args.budget, max_parallel=args.parallel,
+        max_iterations=args.iterations, experiment_budget=args.budget, max_branches=args.parallel,
     )
     print(f"Results written to {path}")

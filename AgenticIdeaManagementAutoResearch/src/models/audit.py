@@ -1,22 +1,43 @@
+from enum import Enum
+
 from pydantic import BaseModel, Field
+
+from models.idea import IdeaDraft
+
+
+class AuditFlag(str, Enum):
+    TRIVIAL = "trivial"
+    TASK_MISMATCH = "task_mismatch"
+    IDEA_MISMATCH = "idea_mismatch"
+    REWARD_HACKING = "reward_hacking"
+
+
+DISCARD_FLAGS = {AuditFlag.TRIVIAL, AuditFlag.TASK_MISMATCH, AuditFlag.REWARD_HACKING}
 
 
 class AuditVerdict(BaseModel):
-    valid: bool = Field(description="False if results are unsupported, fabricated, reward-hacked or otherwise invalid.")
-    idea_implemented_correctly: bool
+    flags: list[AuditFlag] = Field(description="Failure modes that apply; empty when the solution is legitimate.")
+    confidence: float = Field(ge=0, le=1)
+    reasoning: str
+    reconstructed_idea: IdeaDraft | None = Field(
+        default=None,
+        description="REQUIRED iff flags contains idea_mismatch: the idea the solution actually implements, in the same shape as the assigned idea.",
+    )
     task_solved: bool
     score: int = Field(ge=0, le=100, description="How well the experiment, as verified, solves the original problem.")
     evidence: list[str]
     discrepancies: list[str]
-    actually_implemented_idea: str = Field(description="If the solver implemented a different idea, describe it; otherwise empty.")
-    reward_hacking_detected: bool
     lessons_learned: list[str]
 
 
 class AuditResult(AuditVerdict):
     experiment_id: str
-    idea_id: str
+    idea_id: str = Field(description="The idea the result is attributed to: the reconstructed idea when the only flag is idea_mismatch.")
+
+    @property
+    def legit(self) -> bool:
+        return not self.flags
 
     @property
     def trusted(self) -> bool:
-        return self.valid and self.idea_implemented_correctly and not self.reward_hacking_detected
+        return not DISCARD_FLAGS.intersection(self.flags)

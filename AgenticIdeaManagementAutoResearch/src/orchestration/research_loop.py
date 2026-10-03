@@ -2,8 +2,6 @@ import asyncio
 import logging
 from pathlib import Path
 
-from pydantic import BaseModel, Field
-
 from agents.acquisition import select_ideas
 from agents.auditor import audit_experiment
 from agents.base import AgentError
@@ -11,27 +9,14 @@ from agents.clusterizer import cluster_ideas
 from agents.idea_generator import generate_ideas
 from agents.ranker import rank_ideas
 from agents.solver import run_solver
-from models.audit import AuditResult
+from models.audit import AuditFlag, AuditResult
 from models.cluster import Cluster
 from models.experiment import Experiment
-from models.idea import Idea, IdeaStatus
-from models.research_state import IterationRecord, Lesson, ResearchState
+from models.idea import Idea, IdeaOrigin, IdeaStatus
+from models.research_state import IterationRecord, Lesson, ResearchConfig, ResearchState
 from orchestration.resource_planner import plan_resources, stagnation
 
 log = logging.getLogger("aim")
-
-
-class ResearchConfig(BaseModel):
-    ideas_count: int = Field(default=6, ge=1)
-    new_ideas_per_iteration: int = Field(default=3, ge=1)
-    max_iterations: int = Field(default=3, ge=1)
-    experiment_budget: int = Field(default=6, ge=1)
-    max_parallel: int = Field(default=3, ge=1)
-    success_score: int = Field(default=85, ge=0, le=100)
-    discard_score: int = Field(default=25, ge=0, le=100)
-    patience: int = Field(default=2, ge=1)
-    max_attempts_per_idea: int = Field(default=2, ge=1)
-    max_refinements: int = Field(default=2, ge=0)
 
 
 async def run_research(problem: str, config: ResearchConfig, out_dir: Path) -> ResearchState:
@@ -43,6 +28,9 @@ async def run_research(problem: str, config: ResearchConfig, out_dir: Path) -> R
             record = IterationRecord(iteration=iteration)
             state.iterations.append(record)
             await expand_ideas(state, record, config)
+            record.plan = await plan_resources(state, config)
+            branches = record.plan.plan[iteration - 1]
+            log.info("Resource plan %s, %d branches now: %s", record.plan.plan, branches, record.plan.rationale)
             await organize_and_rank(state, record)
             state.save(state_path)
 
@@ -50,17 +38,15 @@ async def run_research(problem: str, config: ResearchConfig, out_dir: Path) -> R
             if not candidates:
                 state.stop_reason = "No untested ideas left to execute."
                 break
-            record.plan = plan_resources(state, config.max_parallel)
-            log.info("Resource plan: %s", record.plan.rationale)
             record.selection = await select_ideas(
                 state.problem, candidates, state.clusters, list(state.rankings.values()),
-                state.evidence(), record.plan, state.remaining_budget,
+                state.evidence(), branches, state.remaining_budget,
             )
             if not record.selection.continue_research:
                 state.stop_reason = f"AcquisitionAgent stopped the research: {record.selection.stop_reason}"
                 break
 
-            await execute(state, record, config, out_dir)
+            await execute(state, record, branches, config, out_dir)
             state.save(state_path)
             state.stop_reason = check_stop(state, config)
             if state.stop_reason:
@@ -109,8 +95,8 @@ async def organize_and_rank(state: ResearchState, record: IterationRecord) -> No
     log.info("Scores: %s", ", ".join(f"{r.idea_id}={r.score}" for r in sorted(record.ranking.rankings, key=lambda r: -r.score)))
 
 
-async def execute(state: ResearchState, record: IterationRecord, config: ResearchConfig, out_dir: Path) -> None:
-    selected = sorted(record.selection.selected, key=lambda s: s.priority)[: record.plan.slots]
+async def execute(state: ResearchState, record: IterationRecord, branches: int, config: ResearchConfig, out_dir: Path) -> None:
+    selected = sorted(record.selection.selected, key=lambda s: s.priority)[:branches]
     experiments, jobs = [], []
     for choice in selected:
         idea = state.ideas[choice.idea_id]
@@ -167,14 +153,20 @@ def learn(state: ResearchState, experiment: Experiment, audit: AuditResult | Non
     if audit is None:
         idea.status = IdeaStatus.RANKED if retries_left else IdeaStatus.DISCARDED
         return
-    state.audit_results.append(audit)
     texts = list(audit.lessons_learned)
+    if audit.trusted and AuditFlag.IDEA_MISMATCH in audit.flags:
+        draft = audit.reconstructed_idea.model_copy(update={"origin": IdeaOrigin.RECONSTRUCTED, "parent_ids": [idea.id]})
+        [rebuilt] = state.add_ideas([draft], experiment.iteration)
+        log.info("%s implemented a different idea than %s; result attributed to reconstructed %s %s", experiment.id, idea.id, rebuilt.id, rebuilt.title)
+        idea.status = IdeaStatus.RANKED if retries_left else IdeaStatus.DISCARDED
+        audit.idea_id = rebuilt.id
+        idea = rebuilt
+    state.audit_results.append(audit)
     if audit.trusted:
         solved_or_useful = audit.task_solved or audit.score >= config.discard_score
         idea.status = IdeaStatus.EVIDENCE_COLLECTED if solved_or_useful else IdeaStatus.DISCARDED
     else:
-        reason = "; ".join(audit.discrepancies) or "results not supported by the experiment"
-        texts.insert(0, f"{experiment.id} excluded from evidence: {reason}. Actually implemented: {audit.actually_implemented_idea or 'n/a'}")
+        texts.insert(0, f"{experiment.id} discarded by audit ({', '.join(f.value for f in audit.flags)}): {audit.reasoning}")
         idea.status = IdeaStatus.RANKED if retries_left else IdeaStatus.DISCARDED
     state.lessons += [
         Lesson(iteration=experiment.iteration, experiment_id=experiment.id, idea_id=idea.id, text=t, trusted=audit.trusted)
