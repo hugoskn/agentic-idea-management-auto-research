@@ -1,7 +1,8 @@
+import os
 import tempfile
 from pathlib import Path
 
-from main import folder_name, write_csv
+from main import folder_name, load_env, write_csv
 from models.audit import AuditResult
 from models.cluster import Cluster, ClusteringResult, IdeaAssignment
 from models.experiment import Experiment, SearchMode, SolverReport
@@ -78,5 +79,14 @@ with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / "results.csv"
     write_csv(state, path)
     assert path.read_text(encoding="utf-8-sig").startswith("Original problem,Generated ideas")
+
+    env = Path(tmp) / ".env"
+    env.write_text('# AIM_CHECK_COMMENT=x\nAIM_CHECK_EMPTY=\nAIM_CHECK_QUOTED="k=1"\nAIM_CHECK_SHELL=file\n', encoding="utf-8")
+    os.environ["AIM_CHECK_SHELL"] = "shell"
+    load_env(env)
+    assert os.environ["AIM_CHECK_QUOTED"] == "k=1"
+    assert os.environ["AIM_CHECK_SHELL"] == "shell"
+    assert "AIM_CHECK_EMPTY" not in os.environ and "# AIM_CHECK_COMMENT" not in os.environ
+    load_env(Path(tmp) / "missing.env")
 
 print("self-check passed")

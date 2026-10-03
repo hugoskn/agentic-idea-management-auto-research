@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import csv
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -11,7 +12,9 @@ from orchestration.research_loop import ResearchConfig, run_research
 log = logging.getLogger("aim")
 
 MAX_WORKDIR_LENGTH = 240
-RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+RESULTS_DIR = PROJECT_DIR / "results"
+ENV_FILE = PROJECT_DIR / ".env"
 
 COLUMNS = [
     "Original problem",
@@ -24,6 +27,28 @@ COLUMNS = [
     "Lessons learned",
     "Final recommended solution",
 ]
+
+
+def load_env(path: Path = ENV_FILE) -> None:
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("\"'")
+        if sep and key and not key.startswith("#") and value:
+            os.environ.setdefault(key, value)
+
+
+def describe_connection() -> str:
+    if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        credential = "ANTHROPIC_AUTH_TOKEN"
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        credential = "ANTHROPIC_API_KEY"
+    else:
+        credential = "Claude Code login session"
+    endpoint = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+    model = os.environ.get("ANTHROPIC_MODEL", "CLI default")
+    return f"credential={credential} endpoint={endpoint} model={model}"
 
 
 def folder_name(problem: str, max_length: int = 80) -> str:
@@ -73,7 +98,8 @@ async def research(problem: str, ideas_count: int = 6, output_root: Path = RESUL
     if not problem:
         raise ValueError("problem must not be empty")
     config = ResearchConfig(ideas_count=ideas_count, **settings)
-    root = Path(output_root).resolve()
+    load_env()
+    root =Path(output_root).resolve()
     room = MAX_WORKDIR_LENGTH - len(str(root / "experiments" / "E999_I999"))
     if room < 10:
         raise ValueError(f"output_root is too deep for experiment working directories: {root}")
@@ -83,6 +109,7 @@ async def research(problem: str, ideas_count: int = 6, output_root: Path = RESUL
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     log.addHandler(handler)
     log.setLevel(logging.INFO)
+    log.info("Connection: %s", describe_connection())
     try:
         state = await run_research(problem, config, out_dir)
     finally:

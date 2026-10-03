@@ -8,7 +8,17 @@ An agentic research loop inspired by *AIM: Agentic Idea Management for Automated
 - Claude Code CLI installed and authenticated (`claude --version`)
 - `pip install -r AgenticIdeaManagementAutoResearch/requirements.txt`
 
-Set `ANTHROPIC_MODEL` to choose the model the agents use; otherwise the CLI default applies.
+## Credentials and provider
+
+By default the agents use your Claude Code login session. To use something else, copy `AgenticIdeaManagementAutoResearch/.env.example` to `.env` in the same folder (it is gitignored) or set the same variables in your shell; shell values take precedence over `.env`, and empty values are ignored.
+
+| Goal | Variables |
+|---|---|
+| Your own Anthropic API key | `ANTHROPIC_API_KEY` (optional `ANTHROPIC_MODEL`) |
+| DeepSeek or another Anthropic-compatible API | `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`, `ANTHROPIC_API_KEY=<provider key>`, `ANTHROPIC_MODEL=deepseek-flash` |
+| Gateway with bearer-token auth | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` |
+
+Claude Code picks `ANTHROPIC_AUTH_TOKEN` first, then `ANTHROPIC_API_KEY`, then the login session. Each run logs which credential, endpoint and model it used (never the key itself). An `ANTHROPIC_API_KEY` already exported in your shell also overrides the login session.
 
 ## Usage
 
