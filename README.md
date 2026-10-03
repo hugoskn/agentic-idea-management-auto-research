@@ -28,7 +28,7 @@ csv_path = main("Reduce the p95 latency of a JSON parsing benchmark", ideas_coun
 print(csv_path)
 ```
 
-The run creates a folder named after the problem containing:
+The run saves its output in `AgenticIdeaManagementAutoResearch/results/{the_problem}/` (the problem trimmed and sanitized to a valid folder name; override the root with `--output` or `output_root`), containing:
 
 - `results.csv`: one row per iteration with the problem, generated ideas, clusters, ranked ideas, selected ideas, execution results, audit results, lessons learned, and the final recommended solution in the last row.
 - `research_state.json`: the full research state, saved after every step.

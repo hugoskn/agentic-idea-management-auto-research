@@ -11,6 +11,7 @@ from orchestration.research_loop import ResearchConfig, run_research
 log = logging.getLogger("aim")
 
 MAX_WORKDIR_LENGTH = 240
+RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
 COLUMNS = [
     "Original problem",
@@ -67,7 +68,7 @@ def write_csv(state: ResearchState, path: Path) -> None:
             writer.writerow(iteration_row(state, record, record is state.iterations[-1]))
 
 
-async def research(problem: str, ideas_count: int = 6, output_root: Path = Path("."), **settings) -> Path:
+async def research(problem: str, ideas_count: int = 6, output_root: Path = RESULTS_DIR, **settings) -> Path:
     problem = problem.strip()
     if not problem:
         raise ValueError("problem must not be empty")
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--budget", type=int, default=6, help="maximum number of experiments")
     parser.add_argument("--parallel", type=int, default=3, help="maximum concurrent solvers")
-    parser.add_argument("--output", type=Path, default=Path("."))
+    parser.add_argument("--output", type=Path, default=RESULTS_DIR)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     path = main(

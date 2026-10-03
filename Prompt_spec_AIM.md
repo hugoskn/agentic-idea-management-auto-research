@@ -16,7 +16,7 @@ Create a main function that receives:
   * The number of initial research ideas that should be generated.
   * Default to a reasonable value if not provided.
 
-The function should generate a CSV file in a new folder named as the problem (trimmed). And the file must contain a structured result with the following columns:
+The function should generate a CSV file in the folder `results/{the_problem}/`, where `{the_problem}` is the problem text trimmed (and sanitized to a valid folder name). And the file must contain a structured result with the following columns:
 
 * The original problem
 * Generated ideas
