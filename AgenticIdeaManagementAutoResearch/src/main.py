@@ -15,6 +15,7 @@ MAX_WORKDIR_LENGTH = 240
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 RESULTS_DIR = PROJECT_DIR / "results"
 ENV_FILE = PROJECT_DIR / ".env"
+OAUTH_TOKEN_PREFIX = "sk-ant-oat"
 
 COLUMNS = [
     "Original problem",
@@ -30,13 +31,19 @@ COLUMNS = [
 
 
 def load_env(path: Path = ENV_FILE) -> None:
-    if not path.is_file():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        key, value = key.strip(), value.strip().strip("\"'")
-        if sep and key and not key.startswith("#") and value:
-            os.environ.setdefault(key, value)
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            key, value = key.strip(), value.strip().strip("\"'")
+            if sep and key and not key.startswith("#") and value:
+                os.environ.setdefault(key, value)
+    if os.environ.get("ANTHROPIC_API_KEY", "").startswith(OAUTH_TOKEN_PREFIX):
+        os.environ.setdefault("CLAUDE_CODE_OAUTH_TOKEN", os.environ.pop("ANTHROPIC_API_KEY"))
+        log.warning(
+            "ANTHROPIC_API_KEY holds a Claude Code OAuth token (%s...), which the API rejects as an API key; "
+            "using it as CLAUDE_CODE_OAUTH_TOKEN instead. Rename the variable to silence this warning.",
+            OAUTH_TOKEN_PREFIX,
+        )
 
 
 def describe_connection() -> str:
@@ -44,6 +51,8 @@ def describe_connection() -> str:
         credential = "ANTHROPIC_AUTH_TOKEN"
     elif os.environ.get("ANTHROPIC_API_KEY"):
         credential = "ANTHROPIC_API_KEY"
+    elif os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        credential = "CLAUDE_CODE_OAUTH_TOKEN"
     else:
         credential = "Claude Code login session"
     endpoint = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
@@ -118,7 +127,6 @@ async def research(problem: str, ideas_count: int = 6, output_root: Path = RESUL
     if not problem:
         raise ValueError("problem must not be empty")
     config = ResearchConfig(ideas_count=ideas_count, **settings)
-    load_env()
     root =Path(output_root).resolve()
     room = MAX_WORKDIR_LENGTH - len(str(root / "experiments" / "E999_I999"))
     if room < 10:
@@ -129,6 +137,7 @@ async def research(problem: str, ideas_count: int = 6, output_root: Path = RESUL
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     log.addHandler(handler)
     log.setLevel(logging.INFO)
+    load_env()
     log.info("Connection: %s", describe_connection())
     try:
         state = await run_research(problem, config, out_dir)

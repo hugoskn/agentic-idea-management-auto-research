@@ -46,6 +46,19 @@ def agent_options(
     )
 
 
+def failure_detail(result: ResultMessage | None) -> str:
+    if result is None:
+        return "no result message"
+    parts = [f"subtype={result.subtype}", f"is_error={result.is_error}"]
+    if result.api_error_status:
+        parts.append(f"API status {result.api_error_status}")
+    if result.errors:
+        parts.append(f"errors={result.errors}")
+    if result.result:
+        parts.append(f"result: {result.result[:300]}")
+    return ", ".join(parts)
+
+
 async def send(client: ClaudeSDKClient, agent: str, prompt: str, output_model: type[T]) -> T:
     await client.query(prompt)
     result = None
@@ -53,8 +66,7 @@ async def send(client: ClaudeSDKClient, agent: str, prompt: str, output_model: t
         if isinstance(message, ResultMessage):
             result = message
     if result is None or result.is_error or result.structured_output is None:
-        detail = f"{result.subtype} {result.errors or ''}" if result else "no result message"
-        raise AgentError(f"{agent} produced no structured output: {detail}")
+        raise AgentError(f"{agent} produced no structured output ({failure_detail(result)})")
     log.info("%s finished in %d turns ($%.4f)", agent, result.num_turns, result.total_cost_usd or 0)
     try:
         return output_model.model_validate(result.structured_output)

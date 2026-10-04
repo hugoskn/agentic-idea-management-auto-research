@@ -14,11 +14,12 @@ By default the agents use your Claude Code login session. To use something else,
 
 | Goal | Variables |
 |---|---|
-| Your own Anthropic API key | `ANTHROPIC_API_KEY` (optional `ANTHROPIC_MODEL`) |
+| Your own Anthropic API key (`sk-ant-api03-...`) | `ANTHROPIC_API_KEY` (optional `ANTHROPIC_MODEL`) |
+| Your Claude subscription via a `claude setup-token` token (`sk-ant-oat...`) | `CLAUDE_CODE_OAUTH_TOKEN` |
 | DeepSeek or another Anthropic-compatible API | `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`, `ANTHROPIC_API_KEY=<provider key>`, `ANTHROPIC_MODEL=deepseek-flash` |
 | Gateway with bearer-token auth | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` |
 
-Claude Code picks `ANTHROPIC_AUTH_TOKEN` first, then `ANTHROPIC_API_KEY`, then the login session. Each run logs which credential, endpoint and model it used (never the key itself). An `ANTHROPIC_API_KEY` already exported in your shell also overrides the login session.
+Claude Code picks `ANTHROPIC_AUTH_TOKEN` first, then `ANTHROPIC_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`, then the login session. An OAuth token (`sk-ant-oat...`) put in `ANTHROPIC_API_KEY` is rejected by the API with 401, so the app moves it to `CLAUDE_CODE_OAUTH_TOKEN` and logs a warning. Each run logs which credential, endpoint and model it used (never the key itself). An `ANTHROPIC_API_KEY` already exported in your shell also overrides the login session.
 
 ## Usage
 

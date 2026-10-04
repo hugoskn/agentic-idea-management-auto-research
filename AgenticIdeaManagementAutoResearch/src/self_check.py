@@ -4,7 +4,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from main import folder_name, load_env, write_csv
+from claude_agent_sdk import ResultMessage
+
+from agents.base import failure_detail
+from main import describe_connection, folder_name, load_env, write_csv
 import agents.acquisition as acquisition
 import agents.idea_generator as generator
 from agents.acquisition import check_dispatch
@@ -127,6 +130,33 @@ with tempfile.TemporaryDirectory() as tmp:
     assert os.environ["AIM_CHECK_SHELL"] == "shell"
     assert "AIM_CHECK_EMPTY" not in os.environ and "# AIM_CHECK_COMMENT" not in os.environ
     load_env(Path(tmp) / "missing.env")
+
+    credentials = ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+    saved = {k: os.environ.pop(k, None) for k in credentials}
+    try:
+        oauth = Path(tmp) / "oauth.env"
+        oauth.write_text("ANTHROPIC_API_KEY=sk-ant-oat01-fake\n", encoding="utf-8")
+        load_env(oauth)
+        assert "ANTHROPIC_API_KEY" not in os.environ and os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-fake"
+        assert "credential=CLAUDE_CODE_OAUTH_TOKEN" in describe_connection()
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-oat01-shell"
+        load_env(Path(tmp) / "missing.env")
+        assert "ANTHROPIC_API_KEY" not in os.environ and os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-fake"
+        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-api03-real"
+        load_env(Path(tmp) / "missing.env")
+        assert "credential=ANTHROPIC_API_KEY" in describe_connection()
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+rejected_auth = ResultMessage(
+    subtype="success", duration_ms=1, duration_api_ms=1, is_error=True, num_turns=1, session_id="s",
+    result="Failed to authenticate. API Error: 401 API key is invalid.", api_error_status=401,
+)
+assert "API status 401" in failure_detail(rejected_auth) and "API key is invalid" in failure_detail(rejected_auth)
+assert failure_detail(None) == "no result message"
 
 def raises(check, *args) -> bool:
     try:
