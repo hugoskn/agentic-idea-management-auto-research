@@ -1,56 +1,118 @@
+import asyncio
+from statistics import mean
+
 from agents.base import ask
-from models.cluster import ClusteringResult
+from models.cluster import Cluster, ClusteringResult
 from models.idea import Idea
-from models.ranking import RankingResult
+from models.ranking import ClusterRanking, IdeaRank, IdeaRanking, RankingResult
 
-SYSTEM_PROMPT = """You are the Ranker of an automated research system.
+SCORING_SCALE = "0-100, higher is better (the evaluator's score when one is configured, otherwise the auditor's)."
 
-Your job is to evaluate every idea and give it a score from 0 to 100: the estimated likelihood that the idea will solve the specific problem, or make a significant contribution toward solving it.
+DENSE_RANKS = """## Ranking scheme: DENSE RANKS
+Integers from 1 (most promising). Ties allowed (same integer). The next distinct rank after a tie is +1, not skipped.
+Valid: [1,2,2,3,4] [1,1,1,1,1] [1,2,3,4,5]. Invalid: [1,2,2,4,5] (gap after tie)."""
 
-The score is the idea's expected value for THIS problem, not whether it is easy, elegant or interesting.
+CLUSTER_PROMPT = f"""You are the Ranker of an automated research system, ranking research-idea CLUSTERS by promise. Your ranks feed a downstream allocator that decides how many parallel research branches to spend on each cluster.
 
-Consider:
-- Expected impact on the problem.
-- Technical feasibility.
-- Relevance to the problem.
-- Evidence from previous audited experiments: ideas that were tested must be re-scored from their verified results, and ideas related to them (same cluster, refinements, combinations) must be updated using that evidence.
-- Complexity and risk.
-- Potential for producing a breakthrough.
-- Whether the idea represents a meaningfully different solution direction.
+You see each cluster's name, description, n_ideas, n_evaluated, mean_evaluated_score and best_evaluated_score, plus the verified lessons so far. You are judging the DIRECTION, not individual ideas.
 
-For every idea provide score (integer 0-100), reasoning (detailed justification), expected_impact, confidence (low/medium/high), key_assumptions and main_risks.
+{DENSE_RANKS}
 
-Calibration:
-- Use the full scale. Do not give all ideas similar scores: differences in expected value must be visible in the scores.
-- Explain the overall score distribution in calibration_notes.
-- Rank every idea exactly once.
+## Guidance
+- High best_evaluated_score -> LOW rank (promising).
+- Many evaluated, all scored poorly -> HIGH rank (exhausted).
+- n_evaluated = 0 -> rank on the quality of the direction against the problem's known bottlenecks and the lessons.
+- Use the lessons: promote directions they support, demote directions they warn against.
+- Do NOT collapse everything to rank 1.
+
+Rank every cluster exactly once. Explain in rationale (1-3 sentences, cite specific clusters).
 """
 
-MIN_SPREAD = 10
+IDEA_PROMPT = f"""You are the Ranker of an automated research system, ranking research IDEAS within a single cluster by promise. Your ranks feed the downstream allocator that picks which idea each branch attempts.
+
+You see the untested candidates of ONE cluster. The cluster's name and description give the direction they share.
+
+{DENSE_RANKS}
+
+## Guidance
+- Rank by how strongly mechanism, novelty and specificity predict a good score.
+- LOW rank for ideas that clearly instantiate the cluster's theme with a concrete, testable approach.
+- HIGH rank for ideas that repeat existing themes or lack mechanism specificity.
+- Do NOT collapse everything to rank 1 unless truly indistinguishable.
+
+Rank every idea exactly once. Explain in rationale (1-3 sentences).
+"""
 
 
-async def rank_ideas(
-    problem: str,
-    ideas: list[Idea],
-    clusters: ClusteringResult,
-    evidence: list[dict],
-    lessons: list[str],
-) -> RankingResult:
-    idea_ids = [i.id for i in ideas]
+def check_dense(ranks: list[tuple[str, int]], expected: set[str], what: str) -> None:
+    ids = [i for i, _ in ranks]
+    if len(ids) != len(set(ids)) or set(ids) != expected:
+        raise ValueError(f"Rank every {what} exactly once. Expected {sorted(expected)}, got {sorted(ids)}.")
+    distinct = sorted({r for _, r in ranks})
+    if distinct != list(range(1, len(distinct) + 1)):
+        raise ValueError(f"Ranks {distinct} are not dense: start at 1 and do not skip a rank after a tie.")
 
-    def check(result: RankingResult) -> None:
-        ranked = [r.idea_id for r in result.rankings]
-        if sorted(ranked) != sorted(idea_ids):
-            raise ValueError(f"Every idea must be ranked exactly once. Expected {sorted(idea_ids)}, got {sorted(ranked)}.")
-        scores = [r.score for r in result.rankings]
-        if len(scores) >= 4 and max(scores) - min(scores) < MIN_SPREAD:
-            raise ValueError(f"Scores span only {min(scores)}-{max(scores)}; differentiate the ideas by expected value.")
 
+def cluster_stats(cluster: Cluster, scores: dict[str, float]) -> dict:
+    evaluated = [scores[m.idea_id] for m in cluster.members if m.idea_id in scores]
+    return {
+        "cluster_id": cluster.id,
+        "name": cluster.name,
+        "description": cluster.description,
+        "n_ideas": len(cluster.members),
+        "n_evaluated": len(evaluated),
+        "mean_evaluated_score": round(mean(evaluated), 2) if evaluated else None,
+        "best_evaluated_score": max(evaluated, default=None),
+    }
+
+
+async def rank_clusters(problem: str, clusters: ClusteringResult, scores: dict[str, float], lessons: list[str]) -> ClusterRanking:
     payload = {
         "problem": problem,
-        "ideas": ideas,
-        "clusters": clusters,
-        "evidence_from_audited_experiments": evidence,
+        "scoring_scale": SCORING_SCALE,
+        "clusters": [cluster_stats(c, scores) for c in clusters.clusters],
         "lessons": lessons,
     }
-    return await ask("Ranker", SYSTEM_PROMPT, payload, RankingResult, check)
+    expected = {c.id for c in clusters.clusters}
+    return await ask(
+        "Ranker[clusters]", CLUSTER_PROMPT, payload, ClusterRanking,
+        lambda r: check_dense([(c.cluster_id, c.rank) for c in r.cluster_ranks], expected, "cluster"),
+    )
+
+
+async def rank_ideas_in_cluster(problem: str, cluster: Cluster, cluster_rank: int, candidates: list[Idea]) -> IdeaRanking:
+    if len(candidates) == 1:
+        return IdeaRanking(idea_ranks=[IdeaRank(idea_id=candidates[0].id, rank=1)], rationale="Only untested idea in the cluster.")
+    payload = {
+        "problem": problem,
+        "scoring_scale": SCORING_SCALE,
+        "cluster": {"name": cluster.name, "description": cluster.description, "cluster_rank": cluster_rank},
+        "ideas_to_rank": [
+            i.model_dump(mode="json", include={"id", "title", "description", "how_it_addresses_problem", "origin", "parent_ids"})
+            for i in candidates
+        ],
+    }
+    expected = {i.id for i in candidates}
+    return await ask(
+        f"Ranker[{cluster.id}]", IDEA_PROMPT, payload, IdeaRanking,
+        lambda r: check_dense([(i.idea_id, i.rank) for i in r.idea_ranks], expected, "idea"),
+    )
+
+
+async def estimate(
+    problem: str,
+    clusters: ClusteringResult,
+    candidates: list[Idea],
+    scores: dict[str, float],
+    lessons: list[str],
+) -> RankingResult:
+    cluster_ranking = await rank_clusters(problem, clusters, scores, lessons)
+    result = RankingResult(clusters=cluster_ranking)
+    by_id = {i.id: i for i in candidates}
+    jobs = {}
+    for cluster in clusters.clusters:
+        members = [by_id[m.idea_id] for m in cluster.members if m.idea_id in by_id]
+        if members:
+            jobs[cluster.id] = rank_ideas_in_cluster(problem, cluster, result.cluster_rank(cluster.id), members)
+    result.ideas = dict(zip(jobs, await asyncio.gather(*jobs.values())))
+    return result

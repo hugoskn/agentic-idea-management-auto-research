@@ -6,7 +6,7 @@ from models.audit import AuditResult
 from models.cluster import ClusteringResult
 from models.experiment import Experiment, SelectionResult
 from models.idea import Idea, IdeaDraft, IdeaStatus
-from models.ranking import IdeaRanking, RankingResult
+from models.ranking import RankingResult
 
 
 class Lesson(BaseModel):
@@ -19,7 +19,7 @@ class Lesson(BaseModel):
 
 class ResearchConfig(BaseModel):
     ideas_count: int = Field(default=6, ge=1)
-    new_ideas_per_iteration: int = Field(default=3, ge=1)
+    max_ideas_per_branch: int = Field(default=3, ge=0, description="Expand proposal slots per executed branch.")
     max_iterations: int = Field(default=3, ge=1)
     experiment_budget: int = Field(default=6, ge=1, description="Total number of Solver branches across the whole run.")
     initial_branches: int = Field(default=5, ge=1, description="Branches in iteration 1, pinned for an initial breadth of exploration.")
@@ -30,6 +30,8 @@ class ResearchConfig(BaseModel):
     patience: int = Field(default=2, ge=1)
     max_attempts_per_idea: int = Field(default=2, ge=1)
     max_refinements: int = Field(default=2, ge=0)
+    evaluator: str | None = Field(default=None, description="Shell command run in each experiment directory; its last stdout line is the 0-100 score.")
+    evaluator_timeout: int = Field(default=600, ge=1, description="Seconds before an evaluator run counts as invalid.")
 
 
 class ResourcePlan(BaseModel):
@@ -51,7 +53,7 @@ class ResearchState(BaseModel):
     problem: str
     ideas: dict[str, Idea] = Field(default_factory=dict)
     clusters: ClusteringResult | None = None
-    rankings: dict[str, IdeaRanking] = Field(default_factory=dict)
+    ranking: RankingResult | None = None
     experiments: list[Experiment] = Field(default_factory=list)
     audit_results: list[AuditResult] = Field(default_factory=list)
     lessons: list[Lesson] = Field(default_factory=list)
@@ -66,8 +68,8 @@ class ResearchState(BaseModel):
         self.ideas.update({i.id: i for i in added})
         return added
 
-    def active_ideas(self) -> list[Idea]:
-        return [i for i in self.ideas.values() if i.status != IdeaStatus.DISCARDED]
+    def untested_ideas(self) -> list[Idea]:
+        return [i for i in self.ideas.values() if i.status in (IdeaStatus.CLUSTERED, IdeaStatus.RANKED)]
 
     def attempts(self, idea_id: str) -> int:
         return sum(e.idea_id == idea_id for e in self.experiments)
@@ -81,30 +83,14 @@ class ResearchState(BaseModel):
     def best_audit(self) -> AuditResult | None:
         return max(self.trusted_audits(), key=lambda a: (a.task_solved, a.score), default=None)
 
-    def best_scores(self) -> dict[str, int]:
-        scores: dict[str, int] = {}
+    def best_scores(self) -> dict[str, float]:
+        scores: dict[str, float] = {}
         for a in self.trusted_audits():
             scores[a.idea_id] = max(a.score, scores.get(a.idea_id, 0))
         return scores
 
     def trusted_lessons(self) -> list[str]:
         return [f"[{l.idea_id}] {l.text}" for l in self.lessons if l.trusted]
-
-    def evidence(self) -> list[dict]:
-        experiments = {e.id: e for e in self.experiments}
-        return [
-            {
-                "idea_id": a.idea_id,
-                "idea_title": self.ideas[a.idea_id].title,
-                "experiment_id": a.experiment_id,
-                "audit_score": a.score,
-                "task_solved": a.task_solved,
-                "result": experiments[a.experiment_id].report.result,
-                "metrics": [m.model_dump() for m in experiments[a.experiment_id].report.metrics],
-                "lessons": a.lessons_learned,
-            }
-            for a in self.trusted_audits()
-        ]
 
     def save(self, path: Path) -> None:
         path.write_text(self.model_dump_json(indent=2), encoding="utf-8")

@@ -2,7 +2,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from models.idea import IdeaDraft
+from models.idea import IdeaContent
 
 
 class AuditFlag(str, Enum):
@@ -19,12 +19,12 @@ class AuditVerdict(BaseModel):
     flags: list[AuditFlag] = Field(description="Failure modes that apply; empty when the solution is legitimate.")
     confidence: float = Field(ge=0, le=1)
     reasoning: str
-    reconstructed_idea: IdeaDraft | None = Field(
+    reconstructed_idea: IdeaContent | None = Field(
         default=None,
         description="REQUIRED iff flags contains idea_mismatch: the idea the solution actually implements, in the same shape as the assigned idea.",
     )
     task_solved: bool
-    score: int = Field(ge=0, le=100, description="How well the experiment, as verified, solves the original problem.")
+    score: float = Field(ge=0, le=100, description="How well the experiment, as verified, solves the original problem. Replaced by the evaluator's score when an evaluator is configured.")
     evidence: list[str]
     discrepancies: list[str]
     lessons_learned: list[str]

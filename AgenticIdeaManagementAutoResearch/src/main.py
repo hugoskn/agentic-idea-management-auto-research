@@ -57,23 +57,41 @@ def folder_name(problem: str, max_length: int = 80) -> str:
     return name or "research"
 
 
+def ranking_text(record: IterationRecord) -> str:
+    if not record.ranking or not record.clustering:
+        return ""
+    names = {c.id: c.name for c in record.clustering.clusters}
+    lines = [f"Clusters: {record.ranking.clusters.rationale}"]
+    for r in sorted(record.ranking.clusters.cluster_ranks, key=lambda r: r.rank):
+        ideas = record.ranking.ideas.get(r.cluster_id)
+        ranked = ", ".join(f"{i.idea_id}={i.rank}" for i in sorted(ideas.idea_ranks, key=lambda i: i.rank)) if ideas else "no untested ideas"
+        lines.append(f"#{r.rank} {r.cluster_id} {names.get(r.cluster_id, '')}: {ranked}" + (f" ({ideas.rationale})" if ideas else ""))
+    return "\n".join(lines)
+
+
 def iteration_row(state: ResearchState, record: IterationRecord, is_last: bool) -> list[str]:
     experiments = [e for e in state.experiments if e.id in record.experiment_ids]
     audits = [a for a in state.audit_results if a.experiment_id in record.experiment_ids]
     ideas = [state.ideas[i] for i in record.new_idea_ids]
     clusters = record.clustering.clusters if record.clustering else []
-    rankings = sorted(record.ranking.rankings, key=lambda r: -r.score) if record.ranking else []
-    selected = sorted(record.selection.selected, key=lambda s: s.priority) if record.selection else []
+    selected = sorted(record.selection.selected, key=lambda s: s.branch) if record.selection else []
     return [
         state.problem,
         "\n".join(f"{i.id} [{i.origin.value}] {i.title}: {i.description}" for i in ideas),
         "\n".join(f"{c.id} {c.name}: {', '.join(m.idea_id for m in c.members)}" for c in clusters),
-        "\n".join(f"{r.idea_id} score={r.score} confidence={r.confidence.value}: {r.reasoning}" for r in rankings),
-        "\n".join(f"P{s.priority} {s.idea_id} [{s.exploration_or_exploitation.value}]: {s.selection_reason}" for s in selected),
-        "\n".join(f"{e.id} {e.idea_id}: {e.report.result if e.report else e.error}" for e in experiments),
+        ranking_text(record),
+        "\n".join(
+            ([f"Dispatch: {record.selection.plan.rationale_summary}"] if record.selection else [])
+            + [f"b{s.branch} {s.idea_id} in {s.cluster_id} [cluster {s.cluster_action.value}, idea {s.idea_action.value}]: {s.rationale}" for s in selected]
+        ),
+        "\n".join(
+            f"{e.id} {e.idea_id}: {e.report.result if e.report else e.error}"
+            + (f" Evaluator scores: {', '.join(f'{v.score:g}' if v.valid else 'invalid' for v in e.evaluations)}" if e.evaluations else "")
+            for e in experiments
+        ),
         "\n".join(
             f"{a.experiment_id} {a.idea_id}: flags={', '.join(f.value for f in a.flags) or 'none'} "
-            f"solved={a.task_solved} score={a.score} confidence={a.confidence:.2f} "
+            f"solved={a.task_solved} score={a.score:g} confidence={a.confidence:.2f} "
             f"discrepancies={'; '.join(a.discrepancies) or 'none'}"
             + (f" reconstructed from {state.ideas[a.idea_id].parent_ids[0]}: {state.ideas[a.idea_id].title}" if a.trusted and a.reconstructed_idea else "")
             for a in audits
@@ -133,11 +151,12 @@ if __name__ == "__main__":
     parser.add_argument("--iterations", type=int, default=3, help="hard cap on iterations planned by the Resource Planner")
     parser.add_argument("--budget", type=int, default=6, help="total number of Solver branches")
     parser.add_argument("--parallel", type=int, default=10, help="maximum Solver branches per iteration")
+    parser.add_argument("--evaluator", help="shell command run in each experiment directory; its last output line is the 0-100 score")
     parser.add_argument("--output", type=Path, default=RESULTS_DIR)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     path = main(
         args.problem, args.ideas, output_root=args.output,
-        max_iterations=args.iterations, experiment_budget=args.budget, max_branches=args.parallel,
+        max_iterations=args.iterations, experiment_budget=args.budget, max_branches=args.parallel, evaluator=args.evaluator,
     )
     print(f"Results written to {path}")

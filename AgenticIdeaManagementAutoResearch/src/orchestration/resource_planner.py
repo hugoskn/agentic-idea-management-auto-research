@@ -61,6 +61,7 @@ async def plan_resources(state: ResearchState, config: ResearchConfig) -> Resour
     to_spend = min(state.remaining_budget, (config.max_iterations - len(frozen)) * config.max_branches)
     scores = state.best_scores()
     clusters = state.clusters.clusters if state.clusters else []
+    untested = {i.id for i in state.untested_ideas()}
     payload = {
         "problem": state.problem,
         "position": {
@@ -77,9 +78,7 @@ async def plan_resources(state: ResearchState, config: ResearchConfig) -> Resour
             "best_so_far": max(scores.values(), default=None),
             "target": config.success_score,
             "evaluated_scores": [a.score for a in state.trusted_audits()],
-            "estimated_scores": [
-                state.rankings[i.id].score for i in state.eligible_ideas(config.max_attempts_per_idea) if i.id in state.rankings
-            ],
+            "untested_candidates": len(untested),
         },
         "cluster_summary": [
             {
@@ -87,6 +86,8 @@ async def plan_resources(state: ResearchState, config: ResearchConfig) -> Resour
                 "description": c.description,
                 "n_ideas": len(c.members),
                 "n_evaluated": sum(m.idea_id in scores for m in c.members),
+                "n_untested": sum(m.idea_id in untested for m in c.members),
+                "cluster_rank": state.ranking.cluster_rank(c.id) if state.ranking else None,
                 "best_evaluated_score": max((scores[m.idea_id] for m in c.members if m.idea_id in scores), default=None),
             }
             for c in clusters

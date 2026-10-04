@@ -8,18 +8,46 @@ class SearchMode(str, Enum):
     EXPLOITATION = "exploitation"
 
 
-class SelectedIdea(BaseModel):
+class ClusterDecision(BaseModel):
+    cluster_id: str
+    action: SearchMode
+    n_branches: int = Field(ge=1)
+    rationale: str
+
+
+class BranchAssignment(BaseModel):
+    branch: int = Field(ge=0)
+    cluster_id: str
+    cluster_action: SearchMode
+    idea_action: SearchMode
+    rationale: str
+
+
+class DispatchPlan(BaseModel):
+    cluster_decisions: list[ClusterDecision]
+    branch_action_assignments: list[BranchAssignment]
+    rationale_summary: str
+    continue_research: bool = Field(description="False when further experimentation is unlikely to provide meaningful value.")
+    stop_reason: str = ""
+
+
+class IdeaPick(BaseModel):
     idea_id: str
-    priority: int = Field(ge=1, description="1 is the highest priority.")
-    selection_reason: str
-    exploration_or_exploitation: SearchMode
+    rationale: str = Field(description="2-4 sentences.")
+
+
+class SelectedIdea(BaseModel):
+    branch: int
+    cluster_id: str
+    cluster_action: SearchMode
+    idea_action: SearchMode
+    idea_id: str
+    rationale: str
 
 
 class SelectionResult(BaseModel):
-    strategy_rationale: str
-    selected: list[SelectedIdea]
-    continue_research: bool = Field(description="False when further experimentation is unlikely to provide meaningful value.")
-    stop_reason: str = ""
+    plan: DispatchPlan
+    selected: list[SelectedIdea] = Field(default_factory=list)
 
 
 class Metric(BaseModel):
@@ -41,12 +69,20 @@ class SolverReport(BaseModel):
     limitations: list[str]
 
 
+class Evaluation(BaseModel):
+    valid: bool = Field(description="False if the evaluator failed, timed out or did not print a score.")
+    score: float = Field(ge=0, le=100)
+    output: str
+
+
 class Experiment(BaseModel):
     id: str
     idea_id: str
     iteration: int
-    mode: SearchMode
+    cluster_action: SearchMode
+    idea_action: SearchMode
     workdir: str
     refinement_rounds: int = 0
     report: SolverReport | None = None
+    evaluations: list[Evaluation] = Field(default_factory=list)
     error: str | None = None
